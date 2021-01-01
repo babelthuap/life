@@ -1,0 +1,244 @@
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life</title>
+  <style type="text/css">
+    body {
+      background-color: tan;
+      margin: 0;
+      padding: 8px;
+      user-select: none;
+    }
+    .controls {
+      margin-bottom: 8px;
+    }
+    .controls #speed {
+      display: block;
+      width: 300px;
+    }
+    .controls button {
+      font-family: monospace;
+    }
+    #metric {
+      font-family: monospace;
+      font-size: 14px;
+      color: green;
+      position: fixed;
+      top: 8px;
+      right: 8px;
+    }
+    #board {
+      background-color: #eee;
+      border: 1px solid black;
+      display: inline-block;
+    }
+    .r {
+      display: block;
+      border-bottom: 1px solid grey;
+    }
+    .c {
+      display: inline-block;
+      border-right: 1px solid grey;
+      cursor: pointer;
+      width: 23px;
+      height: 23px;
+    }
+    .a {
+      background-color: black;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button id="switch">start</button>
+    <button id="randomize">randomize</button>
+    <input type="range" min="0" max="500" value="300" id="speed" title="speed">
+  </div>
+  <div id="metric"></div>
+  <div id="board"></div>
+  <script type="text/javascript">
+  (() => {
+  'use strict';
+
+  const HEIGHT = Math.floor(
+      (window.innerHeight - document.querySelector('.controls').clientHeight - 27) / 24);
+  const WIDTH = Math.floor((window.innerWidth - 18) / 24);
+  const BOARD = document.getElementById('board');
+  const SWITCH = document.getElementById('switch');
+  const RANDOMIZE = document.getElementById('randomize');
+  const SPEED = document.getElementById('speed');
+  const METRIC = document.getElementById('metric');
+
+  let liveCellsInit = false; // whether the set of live cells has been initialized
+
+
+  // set up grid/board functions
+
+  let dragging = false;
+  BOARD.addEventListener('mousedown', () => dragging = true);
+  document.addEventListener('mouseup', () => dragging = false);
+
+  function Cell(x, y) {
+    this.alive = false;
+    this.adj = 0;
+    this.el = document.createElement('div');
+    this.el.classList.add('c');
+    const toggle = () => {
+      liveCellsInit = false;
+      this.alive = !this.alive;
+      this.render();
+    };
+    this.el.addEventListener('mousedown', toggle);
+    this.el.addEventListener('mouseenter', () => {
+      if (dragging) toggle();
+    });
+  }
+
+  Cell.prototype.render = function() {
+    if (this.alive) {
+      this.el.classList.add('a');
+    } else {
+      this.el.classList.remove('a');
+    }
+  };
+
+  function buildGrid() {
+    const grid = new Array(HEIGHT);
+    for (let y = 0; y < HEIGHT; y++) {
+      const row = new Array(WIDTH);
+      for (let x = 0; x < WIDTH; x++) {
+        row[x] = new Cell(x, y);
+      }
+      grid[y] = row;
+    }
+    return grid;
+  }
+
+  function buildBoard() {
+    requestAnimationFrame(() => {
+      BOARD.innerHTML = '';
+      for (const row of grid) {
+        const rowEl = document.createElement('div');
+        rowEl.classList.add('r');
+        for (const cell of row) {
+          rowEl.append(cell.el);
+        }
+        BOARD.append(rowEl);
+      }
+    });
+  }
+
+
+  // set up evolution functions
+
+  const liveCells = new Set();
+  const MASK = 2 ** 15 - 1;
+  const pair = (y, x) => (y << 15) + x;
+  const unpair = n => [n >> 15, n & MASK];
+
+  const NEIGHBORS = [
+    [-1, -1], [-1, 0], [-1, 1], 
+    [ 0, -1],          [ 0, 1], 
+    [ 1, -1], [ 1, 0], [ 1, 1],
+  ];
+
+  function evolve() {
+    const start = performance.now();
+    // init liveCells, if necessary
+    if (!liveCellsInit) {
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH; x++) {
+          if (grid[y][x].alive) {
+            liveCells.add(pair(y, x));
+          }
+        }
+      }
+      liveCellsInit = true;
+    }
+    // clear adj
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        grid[y][x].adj = 0;
+      }
+    }
+    // each live cell contributes to the cells around it
+    liveCells.forEach(n => {
+      const [y, x] = unpair(n);
+      for (const [dy, dx] of NEIGHBORS) {
+        const ny = (y + dy + HEIGHT) % HEIGHT;
+        const nx = (x + dx + WIDTH) % WIDTH;
+        grid[ny][nx].adj++;
+      }
+    });
+    // process life rules and re-render cells
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        const cell = grid[y][x];
+        if (cell.alive) {
+          // if alive...
+          if (cell.adj < 2 || cell.adj > 3) {
+            cell.alive = false;
+            liveCells.delete(pair(y, x));
+            cell.render();
+          }
+        } else {
+          // if dead...
+          if (cell.adj === 3) {
+            cell.alive = true;
+            liveCells.add(pair(y, x));
+            cell.render();
+          }
+        }
+      }
+    }
+    METRIC.innerText = (performance.now() - start).toFixed(1) + ' ms';
+  }
+
+
+  // now initialize everything
+
+  let playing = false;
+  let grid = buildGrid();
+  buildBoard();
+
+  RANDOMIZE.addEventListener('click', randomize);
+
+  function randomize() {
+    liveCellsInit = false;
+    for (const row of grid) {
+      for (const cell of row) {
+        cell.alive = Math.random() < 0.125;
+        cell.render();
+      }
+    }
+  }
+
+  SWITCH.addEventListener('click', hitTheSwitch);
+  document.addEventListener('keydown', ({code}) => {
+    if (code === 'Space') {
+      SWITCH.blur(); // so it doesn't double-trigger if SWITCH is selected
+      hitTheSwitch();
+    }
+  });
+
+  function hitTheSwitch() {
+    playing = !playing;
+    SWITCH.innerText = playing ? 'stop' : 'start';
+    if (playing) {
+      tick();
+    }
+  }
+
+  function tick() {
+    if (!playing) {
+      return;
+    }
+    evolve();
+    if (playing) {
+      setTimeout(tick, SPEED.max - SPEED.value);
+    }
+  }
+  })();
+  </script>
+</body>
+</html>
